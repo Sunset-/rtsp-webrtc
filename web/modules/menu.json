@@ -1,0 +1,26 @@
+{
+  "login": {
+    "module": "login",
+    "version": "0.1",
+    "meta": {}
+  },
+  "frame": {
+    "root" : true,
+    "redirect": "module_b",
+    "module": "frame",
+    "version": "0.1",
+    "meta": {},
+    "children": [
+      {
+        "name": "视频播放",
+        "module": "module_b",
+        "version": "0.1"
+      },
+      {
+        "name": "开发中模块",
+        "module": "module_dev",
+        "version": "0.1"
+      }
+    ]
+  }
+}
