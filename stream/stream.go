@@ -10,10 +10,13 @@ import (
 	"time"
 )
 
+var streamMapLock sync.Mutex
 var streamMap = make(map[string]*Stream)
 
 type Stream struct {
 	sync.Mutex
+
+	Codecs []av.CodecData
 
 	Url    string
 	ctx    context.Context
@@ -28,26 +31,38 @@ type TransChannel interface {
 	Close()
 }
 
-func AttachStream(url string, c TransChannel) {
+func GetStream(url string) (s *Stream, err error) {
 	var stream *Stream
-	stream, ok := streamMap[url]
-	if !ok {
-		stream = &Stream{Url: url}
-		stream.ctx, stream.cancel = context.WithCancel(context.Background())
-		streamMap[url] = stream
-		stream.open()
+	var ok bool
+	streamMapLock.Lock()
+	stream, ok = streamMap[url]
+	streamMapLock.Unlock()
+	if ok {
+		return stream, nil
 	}
+	stream = &Stream{Url: url}
+	stream.ctx, stream.cancel = context.WithCancel(context.Background())
+	err = stream.open()
+	if err != nil {
+		return nil, err
+	}
+	streamMapLock.Lock()
+	cStream, ok := streamMap[url]
+	if ok {
+		return cStream, nil
+	}
+	streamMap[url] = stream
+	streamMapLock.Unlock()
+	return stream, nil
+}
+
+func AttachStream(stream *Stream, c TransChannel) {
 	stream.Lock()
 	stream.transChannels = append(stream.transChannels, c)
 	stream.Unlock()
 	fmt.Println("新增转发信道，当前信道数：", len(stream.transChannels))
 }
-func DettachStream(url string, c TransChannel) {
-	var stream *Stream
-	stream, ok := streamMap[url]
-	if !ok {
-		return
-	}
+func DettachStream(stream *Stream, c TransChannel) {
 	stream.Lock()
 	var after []TransChannel
 	for _, lc := range stream.transChannels {
@@ -64,7 +79,7 @@ func DettachStream(url string, c TransChannel) {
 	stream.Unlock()
 }
 
-func (s *Stream) open() {
+func (s *Stream) open() error {
 	var session *rtsp.Client
 	var retryCount int
 	for {
@@ -77,7 +92,7 @@ func (s *Stream) open() {
 			if retryCount == 3 {
 				fmt.Println("重试3次未成功，取消连接")
 				s.Close()
-				return
+				return err
 			}
 			continue
 		}
@@ -85,14 +100,15 @@ func (s *Stream) open() {
 	}
 	session.RtpKeepAliveTimeout = 10 * time.Second
 	codec, err := session.Streams()
+	s.Codecs = codec
 	if err != nil {
 		fmt.Println("rtsp获取码流失败，关闭rtsp：", err)
 		s.Close()
-		return
+		return err
 	}
+	fmt.Println("RTSP开流成功：", s.Url)
 	sps := codec[0].(h264parser.CodecData).SPS()
 	pps := codec[0].(h264parser.CodecData).PPS()
-	fmt.Println(sps, pps)
 	go func() {
 	LOOP:
 		for {
@@ -121,12 +137,15 @@ func (s *Stream) open() {
 			fmt.Println("RTSP关流成功：", s.Url)
 		}
 	}()
+	return nil
 }
 
 func (s *Stream) Close() {
 	s.cancel()
-	for _,t := range s.transChannels{
+	for _, t := range s.transChannels {
 		t.Close()
 	}
+	streamMapLock.Lock()
 	delete(streamMap, s.Url)
+	streamMapLock.Unlock()
 }

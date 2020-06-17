@@ -22,19 +22,22 @@ type RtcChannel struct{
 	onConnected func()
 	onDisconnected func()
 
-	RemoteSdp string
-	LocalSdp string
-	start bool
-	payloadType uint8
-	Vpre time.Duration
+	RemoteSdp        string
+	LocalSdp         string
+	start            bool
+	videoPayloadType uint8
+	Vpre             time.Duration
 
 	videoTrack *webrtc.Track
+
+	Codecs []av.CodecData
 }
 
-func New(sdp string)(rtc *RtcChannel,err error){
+func New(sdp string,codecs []av.CodecData)(rtc *RtcChannel,err error){
 	rc := &RtcChannel{
 		UUID : uuid.NewV4().String(),
 		RemoteSdp:sdp,
+		Codecs :codecs,
 	}
 	err = rc.initPeerConn()
 	if err!=nil{
@@ -68,15 +71,15 @@ func (r *RtcChannel) initPeerConn()error{
 
 	for _, videoCodec := range mediaEngine.GetCodecsByKind(webrtc.RTPCodecTypeVideo) {
 		if videoCodec.Name == "H264" && strings.Contains(videoCodec.SDPFmtpLine, "packetization-mode=1") {
-			r.payloadType = videoCodec.PayloadType
+			r.videoPayloadType = videoCodec.PayloadType
 			break
 		}
 	}
-	if r.payloadType == 0 {
+	if r.videoPayloadType == 0 {
 		return errors.New("Remote peer does not support H264")
 	}
-	if r.payloadType != 126 {
-		log.Println("Video might not work with codec", r.payloadType)
+	if r.videoPayloadType != 126 {
+		log.Println("Video might not work with codec", r.videoPayloadType)
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
 	r.peerConnection, err = api.NewPeerConnection(webrtc.Configuration{
@@ -145,7 +148,7 @@ func(r *RtcChannel) initTrack() error{
 		})
 	})
 
-	videoTrack, err := r.peerConnection.NewTrack(r.payloadType,rand.Uint32(),"video","_pion")
+	videoTrack, err := r.peerConnection.NewTrack(r.videoPayloadType,rand.Uint32(),"video","_pion")
 	if err != nil {
 		log.Println("NewTrack error", err)
 		return err
@@ -165,37 +168,37 @@ func(r *RtcChannel) initTrack() error{
 		log.Println("AddTrack error", err)
 		return err
 	}
-	return nil
-
 
 	//ADD Audio Track
-	//var audioTrack *webrtc.Track
-	//if len(codecs) > 1 && (codecs[1].Type() == av.PCM_ALAW || codecs[1].Type() == av.PCM_MULAW) {
-	//	switch codecs[1].Type() {
-	//	case av.PCM_ALAW:
-	//		audioTrack, err = peerConnection.NewTrack(webrtc.DefaultPayloadTypePCMA, rand.Uint32(), "audio", suuid+"audio")
-	//	case av.PCM_MULAW:
-	//		audioTrack, err = peerConnection.NewTrack(webrtc.DefaultPayloadTypePCMU, rand.Uint32(), "audio", suuid+"audio")
-	//	}
-	//	if err != nil {
-	//		log.Println(err)
-	//		return
-	//	}
-	//	_, err = peerConnection.AddTransceiverFromTrack(audioTrack,
-	//		webrtc.RtpTransceiverInit{
-	//			Direction: webrtc.RTPTransceiverDirectionSendonly,
-	//		},
-	//	)
-	//	if err != nil {
-	//		log.Println("AddTransceiverFromTrack error", err)
-	//		return
-	//	}
-	//	_, err = peerConnection.AddTrack(audioTrack)
-	//	if err != nil {
-	//		log.Println(err)
-	//		return
-	//	}
-	//}
+	var audioTrack *webrtc.Track
+	codecs := r.Codecs
+	if len(codecs) > 1 && (codecs[1].Type() == av.PCM_ALAW || codecs[1].Type() == av.PCM_MULAW) {
+		switch codecs[1].Type() {
+		case av.PCM_ALAW:
+			audioTrack, err = r.peerConnection.NewTrack(webrtc.DefaultPayloadTypePCMA, rand.Uint32(), "audio", "_audio")
+		case av.PCM_MULAW:
+			audioTrack, err = r.peerConnection.NewTrack(webrtc.DefaultPayloadTypePCMU, rand.Uint32(), "audio", "_audio")
+		}
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		_, err = r.peerConnection.AddTransceiverFromTrack(audioTrack,
+			webrtc.RtpTransceiverInit{
+				Direction: webrtc.RTPTransceiverDirectionSendonly,
+			},
+		)
+		if err != nil {
+			log.Println("AddTransceiverFromTrack error", err)
+			return err
+		}
+		_, err = r.peerConnection.AddTrack(audioTrack)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
+	return nil
 
 }
 
